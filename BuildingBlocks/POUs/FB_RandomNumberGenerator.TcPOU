@@ -1,0 +1,68 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_RandomNumberGenerator" Id="{23feb83e-3981-4a53-95d7-a569922fc546}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_RandomNumberGenerator
+VAR_INPUT
+	bNewNumber		:BOOL;
+	nMinNumber		:DINT;
+	nMaxNumber		:DINT;
+END_VAR
+VAR_OUTPUT
+	bDone			:BOOL;
+	nRandomNumber	:DINT;
+END_VAR
+VAR
+	fbSystemTime 		:NT_GetTime;
+    timeAsTimeStruct	:TIMESTRUCT;
+	osNewNumber			:R_TRIG;
+	iStatus				:INT;
+	nResult				:DINT;
+	fDiv				:DINT;
+	syncTimer	        :TON;
+	bBusy         	    :BOOL;
+    bError          	:BOOL;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[//Get local time of windows
+fbSystemTime(
+	START:=syncTimer.Q,
+	TMOUT:=DEFAULT_ADS_TIMEOUT,
+	TIMESTR=>timeAsTimeStruct,
+	BUSY=>bBusy,
+	ERR=>bError);
+
+syncTimer(IN:=NOT bBusy AND NOT bError, PT:=T#1MS);
+
+IF nMinNumber < 1 THEN
+	nMinNumber := 1;
+END_IF
+
+IF nResult < 1 THEN
+	nResult := 1;
+END_IF
+
+//One shot
+osNewNumber(CLK:=bNewNumber);
+
+IF osNewNumber.Q THEN
+	iStatus := 0;
+END_IF
+
+CASE iStatus OF 
+	0:
+		IF osNewNumber.Q THEN
+			bDone := FALSE;
+			nResult := 0;
+			fDiv := nMaxNumber - nMinNumber;
+			nResult := (timeAsTimeStruct.wMinute + timeAsTimeStruct.wSecond + timeAsTimeStruct.wMilliseconds) MOD (fDiv + 1);
+			nResult := nResult + nMinNumber;
+			iStatus := 10;
+		END_IF
+	10:
+		bDone := TRUE;
+		nRandomNumber := nResult;
+END_CASE]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

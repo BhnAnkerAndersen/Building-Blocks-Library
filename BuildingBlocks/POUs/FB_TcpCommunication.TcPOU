@@ -1,0 +1,203 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1">
+  <POU Name="FB_TcpCommunication" Id="{4f9f6c21-bced-4590-99e6-49e981e27018}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_TcpCommunication
+VAR_INPUT
+	SocketHandler			:T_HSOCKET;						//Socket handler for connection
+	sRemoteHost				:STRING;						//IP Address to connection
+	nRemotePort				:UDINT;							//Port to connection	
+END_VAR
+VAR_OUTPUT
+	aMessage				:ARRAY[0..50] OF T_MaxString;	//Array that contains the read message
+END_VAR
+VAR
+	sReadString				:T_MaxString;					//Read string	
+	aReadBytes				:ARRAY[0..1023] OF BYTE;		//Read bytes
+	nWriteLen				:UDINT;							//Write length
+	ReadComplete			:R_TRIG;						//Read complete
+	tRefreshRead			:FB_ClockPulsOnOff;				//Refresh read time
+	tRefreshWrite			:FB_ClockPulsOnOff;				//Refresh write time
+	WriteSignal				:F_TRIG;						//Write signal
+	iN						:UINT;							//Array incrementer
+	rConnectedBusy			:F_TRIG;						//Falling edge of connection busy
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[]]></ST>
+    </Implementation>
+    <Method Name="M_ConnectRead" Id="{c8c91a52-88de-4a63-999c-01b80af97632}">
+      <Declaration><![CDATA[METHOD M_ConnectRead : BOOL
+VAR_INPUT
+	bConnectRead			:BOOL;							//Connect/Open Read TCP
+	bClear					:BOOL;							//Clear read and write
+END_VAR
+VAR_OUTPUT
+	bConnectedRead			:BOOL;							//Connected to read socket
+END_VAR
+VAR
+	fbConnect				:FB_SocketConnect;				//Connect to socket
+	fbDisconnect			:FB_SocketClose;				//Close communication
+END_VAR]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[//Connect to read
+IF bConnectRead THEN
+	
+	//Disconnect write port 
+	fbDisconnect(hSocket:=SocketHandler);
+	
+
+	//Connect read port
+	fbConnect(
+		sRemoteHost:=sRemoteHost,
+		nRemotePort:=nRemotePort, 
+		bExecute:=TRUE,
+		tTimeout:=T#45S,
+		hSocket=>SocketHandler);
+END_IF
+
+//Reset command
+bConnectRead := FALSE;
+
+rConnectedBusy(CLK:=fbConnect.bBusy);
+
+IF rConnectedBusy.Q AND NOT fbConnect.bError THEN
+	bConnectedRead := TRUE;
+	//bConnectedWrite := FALSE;
+END_IF
+
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_ConnectWrite" Id="{df3bbcf5-5cc4-4651-a50f-1ce1b8311aed}">
+      <Declaration><![CDATA[METHOD M_ConnectWrite : BOOL
+VAR_INPUT
+	bConnectWrite			:BOOL;							//Connect/Open write TCP
+END_VAR
+VAR_OUTPUT
+	bConnectedWrite			:BOOL;							//Connected to write socket
+END_VAR
+VAR
+	fbConnect				:FB_SocketConnect;				//Connect to socket
+	fbDisconnect			:FB_SocketClose;				//Close communication
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[//Connect to write
+IF bConnectWrite THEN
+	
+	//Disconnect write port 
+	fbDisconnect(hSocket:=SocketHandler);
+	
+
+	//Connect read port
+	fbConnect(
+		sRemoteHost:=sRemoteHost,
+		nRemotePort:=nRemotePort, 
+		bExecute:=TRUE,
+		tTimeout:=T#45S,
+		hSocket=>SocketHandler);
+END_IF
+
+//Reset command
+bConnectWrite := FALSE;
+
+rConnectedBusy(CLK:=fbConnect.bBusy);
+
+IF rConnectedBusy.Q AND NOT fbConnect.bError THEN
+	bConnectedWrite := TRUE;
+	//bConnectedRead := FALSE;
+END_IF
+
+
+
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_ReadFrom" Id="{67964fcf-0106-493d-8213-2233a2328c9e}">
+      <Declaration><![CDATA[METHOD M_ReadFrom : BOOL
+VAR_INPUT
+	nMessageBufferSize		:UDINT;							//Message read array buffer size
+	bClear					:BOOL;							//Clear read and write
+END_VAR
+VAR
+	fbRead					:FB_SocketReceive;				//Read from socket
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF M_ConnectRead.bConnectedRead THEN
+
+	//Refresh read timer
+	tRefreshRead(bEnable:=TRUE, tPulsLengthOn:=T#200MS, tPulsLengthOff:=T#200MS);
+	
+	fbRead(
+		hSocket:=SocketHandler, 
+		cbLen:=SIZEOF(aReadBytes),
+		pDest:=ADR(aReadBytes),
+		bExecute:=tRefreshRead.bPuls);
+		
+	ReadComplete(CLK:=fbRead.nRecBytes > 0);
+	
+	
+	//If byte read, copy into string.
+	IF ReadComplete.Q THEN
+		MEMCPY(destAddr:=ADR(sReadString), srcAddr:=ADR(aReadBytes),n:=fbRead.nRecBytes);
+		aMessage[iN] := sReadString;
+		MEMSET(destAddr:=ADR(aReadBytes),fillByte:=0, n:=fbRead.nRecBytes);
+		MEMSET(destAddr:=ADR(sReadString),fillByte:=0, n:=fbRead.nRecBytes);
+		iN:=iN+1;
+	END_IF
+END_IF;
+
+
+//Clear read and write
+IF bClear THEN
+	tRefreshRead(bEnable:=FALSE);
+	MEMSET(destAddr:=ADR(aReadBytes),fillByte:=0, n:=fbRead.nRecBytes);
+	MEMSET(destAddr:=ADR(sReadString),fillByte:=0, n:=fbRead.nRecBytes);
+	
+	FOR iN := 0 TO 50 DO 
+		aMessage[iN] := '';
+	END_FOR
+	
+	bClear := FALSE;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_WriteTo" Id="{0c781109-d78d-455c-859e-3e61e19fa7a9}">
+      <Declaration><![CDATA[METHOD M_WriteTo : BOOL
+VAR_INPUT
+	sWriteString			:T_MaxString;					//Write string
+END_VAR
+VAR
+	fbWrite					:FB_SocketSend;					//Write to socket
+	aWriteBytes				:ARRAY[0..1023] OF BYTE;		//Write bytes
+
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF M_ConnectWrite.bConnectedWrite THEN	
+	
+	//Refresh read timer
+	tRefreshWrite(bEnable:=TRUE, tPulsLengthOn:=T#200MS, tPulsLengthOff:=T#200MS);
+
+	
+	IF tRefreshWrite.bPuls THEN
+		//Get length of string written
+		nWriteLen := INT_TO_UDINT(LEN(STR:=sWriteString));
+	
+		//Copy string into array of bytes
+		MEMCPY(destAddr:=ADR(aWriteBytes),srcAddr:=ADR(sWriteString),n:=nWriteLen);
+		iN := iN + 1;
+	END_IF
+		
+	//Write byte array to TCP server
+	fbWrite(
+		hSocket:=SocketHandler, 
+		cbLen:=nWriteLen,
+		pSrc:=ADR(aWriteBytes),
+		bExecute:=tRefreshWrite.bPuls);
+END_IF;]]></ST>
+      </Implementation>
+    </Method>
+  </POU>
+</TcPlcObject>
